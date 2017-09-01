@@ -2,6 +2,7 @@ package stan
 
 import (
 	"strings"
+	"time"
 
 	"github.com/micro/go-micro/broker"
 	"github.com/micro/go-micro/broker/codec/json"
@@ -11,10 +12,12 @@ import (
 )
 
 type nbroker struct {
-	addrs    []string
-	conn     stan.Conn
-	opts     broker.Options
-	stanOpts stan.Options
+	clusterID string
+	clientID  string
+	addrs     []string
+	conn      stan.Conn
+	opts      broker.Options
+	stanOpts  stan.Options
 }
 
 type subscriber struct {
@@ -43,42 +46,44 @@ func NewBroker(opts ...broker.Option) broker.Broker {
 		o(&options)
 	}
 
-	// TODO parse the options context field and replace the defaults
 	stanOptions := stan.DefaultOptions
 
-	return &nbroker{
-		addrs:    setAddrs(options.Addrs),
-		opts:     options,
-		stanOpts: stanOptions,
+	nb := &nbroker{
+		clusterID: "test-cluster",
+		clientID:  "client",
+		addrs:     setAddrs(options.Addrs),
+		opts:      options,
+		stanOpts:  stanOptions,
 	}
+
+	nb.setExtraOptions()
+
+	return nb
 }
 
 // micro/go-micro/broker.Publiction interface implementation
-// TODO implement
-func (p *publication) Topic() string { return "" }
+func (p *publication) Topic() string { return p.topic }
 
-// TODO implement
-func (p *publication) Message() *broker.Message { return &broker.Message{} }
+func (p *publication) Message() *broker.Message { return p.msg }
 
-// TODO implement
-func (p *publication) Ack() error { return nil }
+// TODO check if this is correct
+func (p *publication) Ack() error { return p.stanMsg.Ack() }
 
 // micro/go-micro/broker.Subscriber interface implementation
-// TODO implement
-func (s *subscriber) Options() broker.SubscribeOptions { return broker.SubscribeOptions{} }
+func (s *subscriber) Options() broker.SubscribeOptions { return s.opts }
 
-// TODO implement
-func (s *subscriber) Topic() string { return "" }
+func (s *subscriber) Topic() string { return s.topic }
 
-// TODO implement
-func (s *subscriber) Unsubscribe() error { return nil }
+func (s *subscriber) Unsubscribe() error { return s.sub.Unsubscribe() }
 
 // micro/go-micro/broker.Broker interface implementation
 // TODO implement
-func (n *nbroker) Options() broker.Options { return broker.Options{} }
+func (n *nbroker) Options() broker.Options { return n.opts }
 
 // TODO implement
-func (n *nbroker) Connect() error { return nil }
+func (n *nbroker) Connect() error {
+	return nil
+}
 
 // TODO implement
 func (n *nbroker) Disconnect() error { return nil }
@@ -103,6 +108,46 @@ func (n *nbroker) Subscribe(string,
 func (n *nbroker) String() string { return "" }
 
 // helper functions
+
+// TODO refactor this to return []stan.Option
+func (n *nbroker) setExtraOptions() {
+	ctx := n.opts.Context
+
+	clusterID := ctx.Value("clusterID")
+	if clusterID, ok := clusterID.(string); ok && clusterID != "" {
+		n.clusterID = clusterID
+	}
+
+	clientID := ctx.Value("clientID")
+	if clientID, ok := clientID.(string); ok && clientID != "" {
+		n.clientID = clientID
+	}
+
+	natsURL := ctx.Value("natsURL")
+	if natsURL, ok := natsURL.(string); ok && natsURL != "" {
+		n.stanOpts.NatsURL = natsURL
+	}
+
+	connectTimeout := ctx.Value("connectTimeout")
+	if connectTimeout, ok := connectTimeout.(time.Duration); ok && connectTimeout != time.Duration(0) {
+		n.stanOpts.ConnectTimeout = connectTimeout
+	}
+
+	ackTimeoutout := ctx.Value("ackTimeoutout")
+	if ackTimeoutout, ok := ackTimeoutout.(time.Duration); ok && ackTimeoutout != time.Duration(0) {
+		n.stanOpts.AckTimeout = ackTimeoutout
+	}
+
+	discoverPrefix := ctx.Value("discoverPrefix")
+	if discoverPrefix, ok := discoverPrefix.(string); ok && discoverPrefix != "" {
+		n.stanOpts.DiscoverPrefix = discoverPrefix
+	}
+
+	maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
+	if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
+		n.stanOpts.MaxPubAcksInflight = maxPubAcksInflight
+	}
+}
 
 func setAddrs(addrs []string) []string {
 	var cAddrs []string
