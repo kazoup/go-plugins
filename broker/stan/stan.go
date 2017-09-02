@@ -8,6 +8,7 @@ import (
 	"github.com/micro/go-micro/broker/codec/json"
 	"github.com/micro/go-micro/cmd"
 	"github.com/nats-io/go-nats-streaming"
+	"github.com/nats-io/go-nats-streaming/pb"
 	"github.com/nats-io/nats"
 )
 
@@ -80,13 +81,16 @@ func (n *nbroker) Connect() error {
 		return nil
 	}
 
-	n.conn.NatsConn().Opts.Servers = n.addrs
-	n.conn.NatsConn().Opts.Secure = n.opts.Secure
-	n.conn.NatsConn().Opts.TLSConfig = n.opts.TLSConfig
+	// TODO figure out how to set the underlying nats connection options
+	// suspect before connecting NatsConn() will be nil, and I don't know
+	// if I can set these values after calling stan.Connect
+	//n.conn.NatsConn().Opts.Servers = n.addrs
+	//n.conn.NatsConn().Opts.Secure = n.opts.Secure
+	//n.conn.NatsConn().Opts.TLSConfig = n.opts.TLSConfig
 
-	if n.conn.NatsConn().Opts.TLSConfig != nil {
-		n.conn.NatsConn().Opts.Secure = true
-	}
+	//if n.conn.NatsConn().Opts.TLSConfig != nil {
+	//	n.conn.NatsConn().Opts.Secure = true
+	//}
 
 	sc, err := stan.Connect(n.clusterID, n.clientID, n.extraOptions()...)
 	if err != nil {
@@ -130,16 +134,39 @@ func (n *nbroker) Publish(topic string, msg *broker.Message, opts ...broker.Publ
 }
 
 // TODO implement
-func (n *nbroker) Subscribe(
-	topic string,
-	handler broker.Handler,
-	opts ...broker.SubscribeOption) (broker.Subscriber, error) {
-	return nil, nil
+func (n *nbroker) Subscribe(topic string, handler broker.Handler, opts ...broker.SubscribeOption) (broker.Subscriber, error) {
+	s := &subscriber{topic: topic}
+
+	for _, o := range opts {
+		o(&s.opts)
+	}
+
+	fn := func(msg *stan.Msg) {
+		var m broker.Message
+		if err := n.opts.Codec.Unmarshal(msg.Data, &m); err != nil {
+			return
+		}
+
+		if err := handler(&publication{msg: &m, topic: msg.Subject, stanMsg: msg}); err == nil {
+			// if the manual ack mode is not set, Ack() will just return error
+			msg.Ack()
+		}
+	}
+
+	var err error
+	if len(s.opts.Queue) > 0 {
+		s.sub, err = n.conn.QueueSubscribe(topic, s.opts.Queue, fn, s.extraOptions()...)
+	} else {
+		s.sub, err = n.conn.Subscribe(topic, fn, s.extraOptions()...)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
 
 func (n *nbroker) String() string { return "stan" }
-
-// helper functions
 
 func (n *nbroker) extraOptions() []stan.Option {
 	ctx := n.opts.Context
@@ -163,6 +190,63 @@ func (n *nbroker) extraOptions() []stan.Option {
 	maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
 	if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
 		opts = append(opts, stan.MaxPubAcksInflight(maxPubAcksInflight))
+	}
+
+	return opts
+}
+
+func (s *subscriber) extraOptions() []stan.SubscriptionOption {
+	ctx := s.opts.Context
+	opts := make([]stan.SubscriptionOption, 0)
+
+	maxInFlight := ctx.Value("maxInFlight")
+	if maxInFlight, ok := maxInFlight.(int); ok {
+		opts = append(opts, stan.MaxInflight(maxInFlight))
+	}
+
+	ackWait := ctx.Value("ackWait")
+	if ackWait, ok := ackWait.(time.Duration); ok {
+		opts = append(opts, stan.AckWait(ackWait))
+	}
+
+	startAt := ctx.Value("startAt")
+	if startAt, ok := startAt.(pb.StartPosition); ok {
+		opts = append(opts, stan.StartAt(startAt))
+	}
+
+	startAtSequence := ctx.Value("startAtSequence")
+	if startAtSequence, ok := startAtSequence.(uint64); ok {
+		opts = append(opts, stan.StartAtSequence(startAtSequence))
+	}
+
+	startTime := ctx.Value("startTime")
+	if startTime, ok := startTime.(time.Time); ok {
+		opts = append(opts, stan.StartAtTime(startTime))
+	}
+
+	startAtTimeDelta := ctx.Value("startAtTimeDelta")
+	if startAtTimeDelta, ok := startAtTimeDelta.(time.Duration); ok {
+		opts = append(opts, stan.StartAtTimeDelta(startAtTimeDelta))
+	}
+
+	startWithLastReceived := ctx.Value("startWithLastReceived")
+	if startWithLastReceived, ok := startWithLastReceived.(bool); ok && startWithLastReceived {
+		opts = append(opts, stan.StartWithLastReceived())
+	}
+
+	deliverAllAvailable := ctx.Value("deliverAllAvailable")
+	if deliverAllAvailable, ok := deliverAllAvailable.(bool); ok && deliverAllAvailable {
+		opts = append(opts, stan.DeliverAllAvailable())
+	}
+
+	setManualAckMode := ctx.Value("setManualAckMode")
+	if setManualAckMode, ok := setManualAckMode.(bool); ok && setManualAckMode || s.Options().AutoAck {
+		opts = append(opts, stan.SetManualAckMode())
+	}
+
+	durableName := ctx.Value("durableName")
+	if durableName, ok := durableName.(string); ok && durableName != "" {
+		opts = append(opts, stan.DurableName(durableName))
 	}
 
 	return opts
