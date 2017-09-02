@@ -17,7 +17,6 @@ type nbroker struct {
 	addrs     []string
 	conn      stan.Conn
 	opts      broker.Options
-	stanOpts  stan.Options
 }
 
 type subscriber struct {
@@ -46,17 +45,14 @@ func NewBroker(opts ...broker.Option) broker.Broker {
 		o(&options)
 	}
 
-	stanOptions := stan.DefaultOptions
-
 	nb := &nbroker{
 		clusterID: "test-cluster",
-		clientID:  "client",
+		clientID:  "",
 		addrs:     setAddrs(options.Addrs),
 		opts:      options,
-		stanOpts:  stanOptions,
 	}
 
-	nb.setExtraOptions()
+	nb.setClientAndClusterID()
 
 	return nb
 }
@@ -77,41 +73,107 @@ func (s *subscriber) Topic() string { return s.topic }
 func (s *subscriber) Unsubscribe() error { return s.sub.Unsubscribe() }
 
 // micro/go-micro/broker.Broker interface implementation
-// TODO implement
 func (n *nbroker) Options() broker.Options { return n.opts }
 
-// TODO implement
 func (n *nbroker) Connect() error {
+	if n.conn != nil {
+		return nil
+	}
+
+	n.conn.NatsConn().Opts.Servers = n.addrs
+	n.conn.NatsConn().Opts.Secure = n.opts.Secure
+	n.conn.NatsConn().Opts.TLSConfig = n.opts.TLSConfig
+
+	if n.conn.NatsConn().Opts.TLSConfig != nil {
+		n.conn.NatsConn().Opts.Secure = true
+	}
+
+	sc, err := stan.Connect(n.clusterID, n.clientID, n.extraOptions()...)
+	if err != nil {
+		return err
+	}
+
+	n.conn = sc
 	return nil
 }
 
-// TODO implement
-func (n *nbroker) Disconnect() error { return nil }
+func (n *nbroker) Disconnect() error { return n.conn.Close() }
 
-// TODO implement
-func (n *nbroker) Address() string { return "" }
+func (n *nbroker) Address() string {
+	if n.conn != nil && n.conn.NatsConn() != nil && n.conn.NatsConn().IsConnected() {
+		return n.conn.NatsConn().ConnectedUrl()
+	}
+	if len(n.addrs) > 0 {
+		return n.addrs[0]
+	}
 
-// TODO implement
-func (n *nbroker) Init(...broker.Option) error { return nil }
+	return ""
+}
 
-// TODO implement
-func (n *nbroker) Publish(string, *broker.Message, ...broker.PublishOption) error { return nil }
+func (n *nbroker) Init(opts ...broker.Option) error {
+	for _, o := range opts {
+		o(&n.opts)
+	}
 
-// TODO implement
-func (n *nbroker) Subscribe(string,
-	broker.Handler,
-	...broker.SubscribeOption) (broker.Subscriber, error) {
-	return nil, nil
+	n.setClientAndClusterID()
+
+	n.addrs = setAddrs(n.opts.Addrs)
+	return nil
+}
+
+func (n *nbroker) Publish(topic string, msg *broker.Message, opts ...broker.PublishOption) error {
+	b, err := n.opts.Codec.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return n.conn.Publish(topic, b)
 }
 
 // TODO implement
-func (n *nbroker) String() string { return "" }
+func (n *nbroker) Subscribe(
+	topic string,
+	handler broker.Handler,
+	opts ...broker.SubscribeOption) (broker.Subscriber, error) {
+	return nil, nil
+}
+
+func (n *nbroker) String() string { return "stan" }
 
 // helper functions
 
-// TODO refactor this to return []stan.Option
-func (n *nbroker) setExtraOptions() {
+func (n *nbroker) extraOptions() []stan.Option {
 	ctx := n.opts.Context
+	opts := make([]stan.Option, 0)
+
+	natsURL := ctx.Value("natsURL")
+	if natsURL, ok := natsURL.(string); ok && natsURL != "" {
+		opts = append(opts, stan.NatsURL(natsURL))
+	}
+
+	connectTimeout := ctx.Value("connectTimeout")
+	if connectTimeout, ok := connectTimeout.(time.Duration); ok && connectTimeout != time.Duration(0) {
+		opts = append(opts, stan.ConnectWait(connectTimeout))
+	}
+
+	ackTimeout := ctx.Value("ackTimeout")
+	if ackTimeout, ok := ackTimeout.(time.Duration); ok && ackTimeout != time.Duration(0) {
+		opts = append(opts, stan.PubAckWait(ackTimeout))
+	}
+
+	maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
+	if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
+		opts = append(opts, stan.MaxPubAcksInflight(maxPubAcksInflight))
+	}
+
+	return opts
+}
+
+func (n *nbroker) setClientAndClusterID() {
+	ctx := n.opts.Context
+
+	// some defaults
+	n.clusterID = "test-cluster"
+	n.clientID = ""
 
 	clusterID := ctx.Value("clusterID")
 	if clusterID, ok := clusterID.(string); ok && clusterID != "" {
@@ -121,31 +183,6 @@ func (n *nbroker) setExtraOptions() {
 	clientID := ctx.Value("clientID")
 	if clientID, ok := clientID.(string); ok && clientID != "" {
 		n.clientID = clientID
-	}
-
-	natsURL := ctx.Value("natsURL")
-	if natsURL, ok := natsURL.(string); ok && natsURL != "" {
-		n.stanOpts.NatsURL = natsURL
-	}
-
-	connectTimeout := ctx.Value("connectTimeout")
-	if connectTimeout, ok := connectTimeout.(time.Duration); ok && connectTimeout != time.Duration(0) {
-		n.stanOpts.ConnectTimeout = connectTimeout
-	}
-
-	ackTimeoutout := ctx.Value("ackTimeoutout")
-	if ackTimeoutout, ok := ackTimeoutout.(time.Duration); ok && ackTimeoutout != time.Duration(0) {
-		n.stanOpts.AckTimeout = ackTimeoutout
-	}
-
-	discoverPrefix := ctx.Value("discoverPrefix")
-	if discoverPrefix, ok := discoverPrefix.(string); ok && discoverPrefix != "" {
-		n.stanOpts.DiscoverPrefix = discoverPrefix
-	}
-
-	maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
-	if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
-		n.stanOpts.MaxPubAcksInflight = maxPubAcksInflight
 	}
 }
 
