@@ -1,4 +1,4 @@
-package stan
+package natsstreaming
 
 import (
 	"strings"
@@ -34,7 +34,7 @@ type publication struct {
 }
 
 func init() {
-	cmd.DefaultBrokers["stan"] = NewBroker
+	cmd.DefaultBrokers["nats-streaming"] = NewBroker
 }
 
 func NewBroker(opts ...broker.Option) broker.Broker {
