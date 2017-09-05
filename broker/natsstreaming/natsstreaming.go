@@ -67,7 +67,9 @@ func (p *publication) Message() *broker.Message { return p.msg }
 func (p *publication) Ack() error { return p.stanMsg.Ack() }
 
 // micro/go-micro/broker.Subscriber interface implementation
-func (s *subscriber) Options() broker.SubscribeOptions { return s.opts }
+func (s *subscriber) Options() broker.SubscribeOptions {
+	return s.opts
+}
 
 func (s *subscriber) Topic() string { return s.topic }
 
@@ -89,7 +91,7 @@ func (n *nbroker) Connect() error {
 	//n.conn.NatsConn().Opts.TLSConfig = n.opts.TLSConfig
 
 	//if n.conn.NatsConn().Opts.TLSConfig != nil {
-	//	n.conn.NatsConn().Opts.Secure = true
+	//  n.conn.NatsConn().Opts.Secure = true
 	//}
 
 	sc, err := stan.Connect(n.clusterID, n.clientID, n.extraOptions()...)
@@ -169,28 +171,34 @@ func (n *nbroker) Subscribe(topic string, handler broker.Handler, opts ...broker
 func (n *nbroker) String() string { return "stan" }
 
 func (n *nbroker) extraOptions() []stan.Option {
-	ctx := n.opts.Context
 	opts := make([]stan.Option, 0)
 
-	natsURL := ctx.Value("natsURL")
-	if natsURL, ok := natsURL.(string); ok && natsURL != "" {
-		opts = append(opts, stan.NatsURL(natsURL))
-	}
+	opts = append(opts, func(o *stan.Options) error {
+		o.NatsURL = n.addrs[0]
+		return nil
+	})
 
-	connectTimeout := ctx.Value("connectTimeout")
-	if connectTimeout, ok := connectTimeout.(time.Duration); ok && connectTimeout != time.Duration(0) {
-		opts = append(opts, stan.ConnectWait(connectTimeout))
-	}
-
-	ackTimeout := ctx.Value("ackTimeout")
-	if ackTimeout, ok := ackTimeout.(time.Duration); ok && ackTimeout != time.Duration(0) {
-		opts = append(opts, stan.PubAckWait(ackTimeout))
-	}
-
-	maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
-	if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
-		opts = append(opts, stan.MaxPubAcksInflight(maxPubAcksInflight))
-	}
+	//ctx := n.opts.Context
+	//
+	//natsURL := ctx.Value("natsURL")
+	//if natsURL, ok := natsURL.(string); ok && natsURL != "" {
+	//  opts = append(opts, stan.NatsURL(natsURL))
+	//}
+	//
+	//connectTimeout := ctx.Value("connectTimeout")
+	//if connectTimeout, ok := connectTimeout.(time.Duration); ok && connectTimeout != time.Duration(0) {
+	//  opts = append(opts, stan.ConnectWait(connectTimeout))
+	//}
+	//
+	//ackTimeout := ctx.Value("ackTimeout")
+	//if ackTimeout, ok := ackTimeout.(time.Duration); ok && ackTimeout != time.Duration(0) {
+	//  opts = append(opts, stan.PubAckWait(ackTimeout))
+	//}
+	//
+	//maxPubAcksInflight := ctx.Value("maxPubAcksInflight")
+	//if maxPubAcksInflight, ok := maxPubAcksInflight.(int); ok && maxPubAcksInflight != 0 {
+	//  opts = append(opts, stan.MaxPubAcksInflight(maxPubAcksInflight))
+	//}
 
 	return opts
 }
@@ -253,21 +261,21 @@ func (s *subscriber) extraOptions() []stan.SubscriptionOption {
 }
 
 func (n *nbroker) setClientAndClusterID() {
-	ctx := n.opts.Context
-
 	// some defaults
 	n.clusterID = "test-cluster"
-	n.clientID = ""
+	n.clientID = "foo"
 
-	clusterID := ctx.Value("clusterID")
-	if clusterID, ok := clusterID.(string); ok && clusterID != "" {
-		n.clusterID = clusterID
-	}
+	//ctx := n.opts.Context
 
-	clientID := ctx.Value("clientID")
-	if clientID, ok := clientID.(string); ok && clientID != "" {
-		n.clientID = clientID
-	}
+	//clusterID := ctx.Value("clusterID")
+	//if clusterID, ok := clusterID.(string); ok && clusterID != "" {
+	//  n.clusterID = clusterID
+	//}
+	//
+	//clientID := ctx.Value("clientID")
+	//if clientID, ok := clientID.(string); ok && clientID != "" {
+	//  n.clientID = clientID
+	//}
 }
 
 func setAddrs(addrs []string) []string {
