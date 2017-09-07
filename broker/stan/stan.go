@@ -10,6 +10,7 @@ import (
 	"github.com/nats-io/go-nats-streaming"
 	"github.com/nats-io/go-nats-streaming/pb"
 	"github.com/nats-io/nats"
+	"golang.org/x/net/context"
 )
 
 type nbroker struct {
@@ -39,7 +40,8 @@ func init() {
 
 func NewBroker(opts ...broker.Option) broker.Broker {
 	options := broker.Options{
-		Codec: json.NewCodec(),
+		Codec:   json.NewCodec(),
+		Context: context.TODO(),
 	}
 
 	for _, o := range opts {
@@ -48,7 +50,7 @@ func NewBroker(opts ...broker.Option) broker.Broker {
 
 	nb := &nbroker{
 		clusterID: "test-cluster",
-		clientID:  "",
+		clientID:  "test",
 		addrs:     setAddrs(options.Addrs),
 		opts:      options,
 	}
@@ -170,6 +172,10 @@ func (n *nbroker) String() string { return "stan" }
 
 func (n *nbroker) extraOptions() []stan.Option {
 	ctx := n.opts.Context
+	if ctx == nil {
+		return nil
+	}
+
 	opts := make([]stan.Option, 0)
 
 	natsURL := ctx.Value("natsURL")
@@ -197,6 +203,10 @@ func (n *nbroker) extraOptions() []stan.Option {
 
 func (s *subscriber) extraOptions() []stan.SubscriptionOption {
 	ctx := s.opts.Context
+	if ctx == nil {
+		return nil
+	}
+
 	opts := make([]stan.SubscriptionOption, 0)
 
 	maxInFlight := ctx.Value("maxInFlight")
@@ -254,10 +264,9 @@ func (s *subscriber) extraOptions() []stan.SubscriptionOption {
 
 func (n *nbroker) setClientAndClusterID() {
 	ctx := n.opts.Context
-
-	// some defaults
-	n.clusterID = "test-cluster"
-	n.clientID = ""
+	if ctx == nil {
+		return
+	}
 
 	clusterID := ctx.Value("clusterID")
 	if clusterID, ok := clusterID.(string); ok && clusterID != "" {
